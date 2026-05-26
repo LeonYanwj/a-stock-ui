@@ -1,6 +1,7 @@
 node_modules
 dist
 a-stock-analyzer/
+.idea/
 .DS_Store
 .env.local
 .env.*.local

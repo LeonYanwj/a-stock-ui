@@ -13,7 +13,7 @@ export function signedPct(value: number) {
   return `${sign}${value.toFixed(2)}%`
 }
 
-export function toneFromNumber(value: number) {
+export function toneFromNumber(value: number): 'positive' | 'negative' | 'neutral' {
   if (value > 0) return 'positive'
   if (value < 0) return 'negative'
   return 'neutral'

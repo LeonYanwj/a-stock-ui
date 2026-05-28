@@ -31,6 +31,7 @@ export interface AccountApiRow {
 
 export interface PositionApiRow {
   ts_code: string
+  name?: string | null
   qty: number
   avg_cost: number
   current_price?: number | null
@@ -43,8 +44,10 @@ export interface PositionApiRow {
 export interface TradeApiRow {
   trade_id: number
   trade_date: string
+  trade_time?: string | null
   side: 'BUY' | 'SELL' | string
   ts_code: string
+  name?: string | null
   qty: number
   price: number
   amount: number
@@ -129,6 +132,14 @@ export interface DailyBar {
   close?: number | null
   vol?: number | null
   pct_chg?: number | null
+}
+
+export interface StreamProgressEvent<T> {
+  progress?: number
+  msg?: string
+  result?: T
+  error?: string
+  message?: string
 }
 
 export interface OverviewMetric {

@@ -9,6 +9,7 @@ import type {
   TradeApiRow,
   PositionApiRow,
   Strategy,
+  StreamProgressEvent,
 } from '../types'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
@@ -27,7 +28,7 @@ export class ApiError extends Error {
   }
 }
 
-function buildUrl(path: string, params?: Record<string, string | number | boolean | undefined | null>) {
+export function buildUrl(path: string, params?: Record<string, string | number | boolean | undefined | null>) {
   const url = new URL(path, API_BASE_URL)
   Object.entries(params ?? {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
@@ -92,6 +93,61 @@ export interface DailyRunParams {
   dryRun: boolean
 }
 
+export interface StreamHandlers<T> {
+  onProgress?: (progress: number, message: string, event: StreamProgressEvent<T>) => void
+  onResult?: (result: T, event: StreamProgressEvent<T>) => void
+  onError?: (message: string, event?: StreamProgressEvent<T>) => void
+}
+
+function openJsonStream<T>(
+  path: string,
+  params: Record<string, string | number | boolean | undefined | null>,
+  handlers: StreamHandlers<T>,
+) {
+  const source = new EventSource(buildUrl(path, params))
+  let finished = false
+
+  source.onmessage = (event) => {
+    let payload: StreamProgressEvent<T>
+    try {
+      payload = JSON.parse(event.data) as StreamProgressEvent<T>
+    } catch {
+      handlers.onError?.('流式响应解析失败')
+      source.close()
+      finished = true
+      return
+    }
+
+    if (payload.error) {
+      handlers.onError?.(payload.message ?? payload.error, payload)
+      source.close()
+      finished = true
+      return
+    }
+
+    if (payload.result !== undefined) {
+      handlers.onResult?.(payload.result, payload)
+      source.close()
+      finished = true
+      return
+    }
+
+    handlers.onProgress?.(Number(payload.progress ?? 0), payload.msg ?? '', payload)
+  }
+
+  source.onerror = () => {
+    if (finished) return
+    handlers.onError?.('流式连接中断')
+    source.close()
+    finished = true
+  }
+
+  return () => {
+    source.close()
+    finished = true
+  }
+}
+
 export const api = {
   baseUrl: API_BASE_URL,
   health: () => request<{ status: string; db: string }>('/health'),
@@ -114,6 +170,16 @@ export const api = {
     request<RatingApiResponse>(`/api/rate/${encodeURIComponent(code)}`, {
       params: { strategy, no_flow: noFlow, no_news: noNews },
     }),
+  streamRating: (
+    code: string,
+    params: { strategy: Strategy; noFlow?: boolean; noNews?: boolean },
+    handlers: StreamHandlers<RatingApiResponse>,
+  ) =>
+    openJsonStream<RatingApiResponse>(
+      `/api/rate/${encodeURIComponent(code)}/stream`,
+      { strategy: params.strategy, no_flow: params.noFlow ?? false, no_news: params.noNews ?? false },
+      handlers,
+    ),
   searchStocks: (search: string, limit = 20) =>
     request<StockApiRow[]>('/api/stocks', { params: { search, limit } }),
   getDailyBars: (tsCode: string, limit = 90) =>
@@ -128,6 +194,16 @@ export const api = {
     request<PositionApiRow[]>(`/api/accounts/${accountId}/positions`, {
       params: { use_realtime: useRealtime, asof },
     }),
+  streamPositions: (
+    accountId: number,
+    params: { asof?: string; useRealtime?: boolean },
+    handlers: StreamHandlers<PositionApiRow[]>,
+  ) =>
+    openJsonStream<PositionApiRow[]>(
+      `/api/accounts/${accountId}/positions/stream`,
+      { asof: params.asof, use_realtime: params.useRealtime ?? true },
+      handlers,
+    ),
   getTrades: (accountId: number, limit = 50) =>
     request<TradeApiRow[]>(`/api/accounts/${accountId}/trades`, { params: { limit } }),
   getEquityCurve: (accountId: number) => request<EquityApiPoint[]>(`/api/accounts/${accountId}/equity`),

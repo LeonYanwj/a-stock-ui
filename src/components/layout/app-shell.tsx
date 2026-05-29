@@ -101,10 +101,11 @@ export function AppShell({
         )}
 
         <div className={cn('transition-[padding] duration-200', sidebarOpen && 'md:pl-64')}>
-          <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-            <div className="flex h-full items-center gap-3 px-4 sm:gap-4 lg:px-6">
+          <header className="sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+            <div className="flex h-16 items-center gap-5 px-4 lg:px-6">
               <Button
                 aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+                className="size-9 shadow-sm"
                 onClick={() => {
                   if (window.matchMedia('(min-width: 768px)').matches) {
                     setSidebarOpen((value) => !value)
@@ -117,22 +118,23 @@ export function AppShell({
               >
                 <PanelLeft className="size-4" />
               </Button>
-              <Separator className="h-6" orientation="vertical" />
-              <div className="hidden min-w-0 items-center gap-1 md:flex">
+              <nav className="hidden min-w-0 items-center gap-8 md:flex">
                 {navItems.map((item) => (
-                  <Button
-                    className="h-8"
+                  <button
+                    className={cn(
+                      'text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
+                      view === item.key && 'text-foreground',
+                    )}
                     key={item.key}
                     onClick={() => handleViewChange(item.key)}
-                    size="sm"
-                    variant={view === item.key ? 'secondary' : 'ghost'}
+                    type="button"
                   >
                     {item.label}
-                  </Button>
+                  </button>
                 ))}
-              </div>
+              </nav>
               <div className="ms-auto flex min-w-0 items-center gap-2">
-                <div className="inline-flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-sm">
+                <div className="inline-flex h-9 items-center gap-2 rounded-md border bg-background px-3 text-sm shadow-sm">
                   <BriefcaseBusiness className="size-4 text-muted-foreground" />
                   <span className="max-w-36 truncate">
                     {view === 'paper' ? selectedAccount?.account_name ?? '未选择账户' : `${strategyLabels[strategy]}策略`}
@@ -148,19 +150,22 @@ export function AppShell({
                 </Tooltip>
               </div>
             </div>
-            <div className="flex gap-1 overflow-x-auto border-t px-3 py-2 md:hidden">
+            <div className="flex gap-5 overflow-x-auto px-4 pb-3 md:hidden">
               {navItems.map((item) => {
                 const Icon = item.icon
                 return (
-                  <Button
+                  <button
+                    className={cn(
+                      'inline-flex items-center gap-2 whitespace-nowrap text-sm font-medium text-muted-foreground',
+                      view === item.key && 'text-foreground',
+                    )}
                     key={item.key}
                     onClick={() => handleViewChange(item.key)}
-                    size="sm"
-                    variant={view === item.key ? 'default' : 'ghost'}
+                    type="button"
                   >
                     <Icon className="size-4" />
                     {item.label}
-                  </Button>
+                  </button>
                 )
               })}
             </div>

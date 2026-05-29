@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { DailyRunParams } from '@/lib/api'
 import { cnMoney, fixed, signedPct, toneFromNumber } from '@/lib/format'
 import type { AccountApiRow, EquityApiPoint, PositionApiRow, TaskStatus, TradeApiRow } from '@/types'
@@ -73,42 +74,51 @@ export function PaperPage({
   const latestDailyRun = tasks.find((task) => task.name === 'daily_run')
 
   return (
-    <div className="space-y-5">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {accounts.map((account) => (
-          <button
-            className={`rounded-lg border bg-card p-4 text-left shadow-sm transition hover:border-primary ${
-              selectedAccount.account_id === account.account_id ? 'border-primary ring-2 ring-primary/15' : ''
-            }`}
-            key={account.account_id}
-            onClick={() => onSelectAccount(account.account_id)}
-            type="button"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{account.account_name}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{strategyLabels[account.strategy_name]}</p>
+    <Tabs className="space-y-5" defaultValue="overview">
+      <div className="w-full overflow-x-auto pb-1">
+        <TabsList>
+          <TabsTrigger value="overview">总览</TabsTrigger>
+          <TabsTrigger value="positions">持仓同步</TabsTrigger>
+          <TabsTrigger value="activity">流水任务</TabsTrigger>
+          <TabsTrigger value="actions">调仓操作</TabsTrigger>
+        </TabsList>
+      </div>
+
+      <TabsContent className="space-y-5" value="overview">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {accounts.map((account) => (
+            <button
+              className={`rounded-lg border bg-card p-4 text-left shadow-sm transition hover:border-primary ${
+                selectedAccount.account_id === account.account_id ? 'border-primary ring-2 ring-primary/15' : ''
+              }`}
+              key={account.account_id}
+              onClick={() => onSelectAccount(account.account_id)}
+              type="button"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{account.account_name}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{strategyLabels[account.strategy_name]}</p>
+                </div>
+                <Badge variant={account.is_active ? 'default' : 'secondary'}>{account.is_active ? 'active' : 'paused'}</Badge>
               </div>
-              <Badge variant={account.is_active ? 'default' : 'secondary'}>{account.is_active ? 'active' : 'paused'}</Badge>
-            </div>
-            <div className="mt-4 flex items-end justify-between gap-3">
-              <strong className="text-xl">{cnMoney(account.current_equity)}</strong>
-              <span className={`text-sm font-medium ${toneClass(toneFromNumber(account.return_pct))}`}>
-                {signedPct(account.return_pct)}
-              </span>
-            </div>
-          </button>
-        ))}
-      </div>
+              <div className="mt-4 flex items-end justify-between gap-3">
+                <strong className="text-xl">{cnMoney(account.current_equity)}</strong>
+                <span className={`text-sm font-medium ${toneClass(toneFromNumber(account.return_pct))}`}>
+                  {signedPct(account.return_pct)}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="当前权益" value={cnMoney(selectedAccount.current_equity)} helper={`现金 ${cnMoney(selectedAccount.current_cash)}`} />
-        <MetricCard label="日权益变化" value={equityDelta(latestEquity, previousEquity)} tone={toneFromNumber((latestEquity?.daily_return ?? 0) * 100)} />
-        <MetricCard label="持仓市值" value={cnMoney(positionValue)} helper={`${positions.length} 只持仓`} />
-        <MetricCard label="平均浮盈亏" value={signedPct(unrealizedPct * 100)} tone={toneFromNumber(unrealizedPct * 100)} />
-      </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard label="当前权益" value={cnMoney(selectedAccount.current_equity)} helper={`现金 ${cnMoney(selectedAccount.current_cash)}`} />
+          <MetricCard label="日权益变化" value={equityDelta(latestEquity, previousEquity)} tone={toneFromNumber((latestEquity?.daily_return ?? 0) * 100)} />
+          <MetricCard label="持仓市值" value={cnMoney(positionValue)} helper={`${positions.length} 只持仓`} />
+          <MetricCard label="平均浮盈亏" value={signedPct(unrealizedPct * 100)} tone={toneFromNumber(unrealizedPct * 100)} />
+        </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.9fr)]">
         <Card>
           <CardHeader>
             <SectionHeader title="账户权益" description="现金、持仓市值和总权益随时间变化" />
@@ -117,28 +127,37 @@ export function PaperPage({
             <EquityChart data={equityCurve} loading={accountLoading} />
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <SectionHeader title="任务摘要" description="自动调仓、每日流程和报告回看" />
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <TaskSummary task={latestRebalance} title="最近自动调仓" />
-            <TaskSummary task={latestDailyRun} title="最近每日流程" />
-            {dailyReport && (
-              <details className="rounded-md border bg-muted/30 p-3">
-                <summary className="cursor-pointer text-sm font-medium">单日复盘报告</summary>
-                <pre className="mt-3 max-h-52 overflow-auto whitespace-pre-wrap text-xs leading-6 text-muted-foreground">
-                  {dailyReport}
-                </pre>
-              </details>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      </TabsContent>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.9fr)]">
+      <TabsContent className="space-y-5" value="positions">
         <PositionsTable positions={positions} loading={accountLoading} stream={positionStream} onRatePosition={onRatePosition} />
-        <div className="space-y-5">
+      </TabsContent>
+
+      <TabsContent className="space-y-5" value="activity">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <Card>
+            <CardHeader>
+              <SectionHeader title="任务摘要" description="自动调仓、每日流程和报告回看" />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <TaskSummary task={latestRebalance} title="最近自动调仓" />
+              <TaskSummary task={latestDailyRun} title="最近每日流程" />
+              {dailyReport && (
+                <details className="rounded-md border bg-muted/30 p-3">
+                  <summary className="cursor-pointer text-sm font-medium">单日复盘报告</summary>
+                  <pre className="mt-3 max-h-52 overflow-auto whitespace-pre-wrap text-xs leading-6 text-muted-foreground">
+                    {dailyReport}
+                  </pre>
+                </details>
+              )}
+            </CardContent>
+          </Card>
+          <TradesTable trades={trades} />
+        </div>
+      </TabsContent>
+
+      <TabsContent className="space-y-5" value="actions">
+        <div className="max-w-xl">
           <CommandPanel
             dryRun={dryRun}
             enableNews={enableNews}
@@ -152,10 +171,9 @@ export function PaperPage({
             onAutoRebalance={() => onAutoRebalance(limit, enableNews)}
             onDailyRun={() => onDailyRun({ limit, dryRun })}
           />
-          <TradesTable trades={trades} />
         </div>
-      </div>
-    </div>
+      </TabsContent>
+    </Tabs>
   )
 }
 

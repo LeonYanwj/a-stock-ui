@@ -1,246 +1,68 @@
-import {
-  BarChart3,
-  BriefcaseBusiness,
-  LineChart,
-  PanelLeft,
-  RefreshCw,
-  Search,
-  WalletCards,
-  X,
-} from 'lucide-react'
-import { useState } from 'react'
-import type { ReactNode } from 'react'
-import { Badge } from '@/components/ui/badge'
+import { BarChart3, ChevronDown, CircleHelp, LogOut, Menu, RefreshCw, ScanSearch, Settings, Sparkles, WalletCards, X } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { AccountApiRow, Strategy } from '@/types'
+import type { SystemDataStatus, TradeRun } from '@/types'
 
-export type View = 'paper' | 'rating' | 'backtest'
+// 保留旧视图字面量仅用于让尚未迁移的研究页面继续通过类型检查；导航不再入口这些页面。
+export type View = 'overview' | 'workbench' | 'scan' | 'records' | 'rules' | 'settings' | 'runs' | 'plans' | 'fills' | 'performance' | 'comparison' | 'etfs' | 'audit'
 
-const navItems: Array<{ key: View; label: string; icon: typeof WalletCards }> = [
-  { key: 'paper', label: '模拟盘', icon: WalletCards },
-  { key: 'rating', label: '持仓评级', icon: Search },
-  { key: 'backtest', label: '回测表现', icon: LineChart },
+const navItems: Array<{ key: View; label: string; icon: typeof BarChart3 }> = [
+  { key: 'overview', label: '概览', icon: BarChart3 },
+  { key: 'workbench', label: '当前交易', icon: Sparkles },
+  { key: 'scan', label: '市场扫描', icon: ScanSearch },
+  { key: 'records', label: '持仓与记录', icon: WalletCards },
+  { key: 'rules', label: '交易规则', icon: CircleHelp },
+  { key: 'settings', label: '设置', icon: Settings },
 ]
 
-export const strategyLabels: Record<Strategy, string> = {
-  short_term: '短线',
-  swing: '波段',
-  trend: '趋势',
-  ic_optimized: 'IC 优化',
-}
-
-export const strategyDescriptions: Record<Strategy, string> = {
-  short_term: '1-3 天，重资金流、量价齐升、MACD 与短期反转。',
-  swing: '1-4 周，综合价值、质量、资金、技术和消息面。',
-  trend: '1-3 月，偏长动量和资金持续流入。',
-  ic_optimized: '基于多窗口 IC 调权重，偏稳健验证。',
-}
-
-export function AppShell({
-  view,
-  onViewChange,
-  title,
-  subtitle,
-  apiBaseUrl,
-  health,
-  selectedAccount,
-  strategy,
-  onRefresh,
-  children,
-}: {
+export function AppShell({ view, onViewChange, title, subtitle, health, runs, selectedRun, onRunChange, dataStatus, onRefresh, onLogout, children }: {
   view: View
   onViewChange: (view: View) => void
   title: string
   subtitle: string
-  apiBaseUrl: string
   health: { status: string; db: string } | null
-  selectedAccount?: AccountApiRow
-  strategy: Strategy
+  runs: TradeRun[]
+  selectedRun?: TradeRun
+  onRunChange: (runId: number) => void
+  dataStatus: SystemDataStatus | null
   onRefresh: () => void
+  onLogout: () => void
   children: ReactNode
 }) {
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-  const handleViewChange = (nextView: View) => {
-    onViewChange(nextView)
-    setMobileSidebarOpen(false)
-  }
-
-  return (
-    <TooltipProvider>
-      <div className="min-h-svh bg-background text-foreground">
-        <aside
-          className={cn(
-            'fixed inset-y-0 left-0 z-30 hidden w-64 border-r bg-sidebar text-sidebar-foreground transition-transform duration-200 md:block',
-            !sidebarOpen && '-translate-x-full',
-          )}
-        >
-          <SidebarContents apiBaseUrl={apiBaseUrl} health={health} onViewChange={handleViewChange} view={view} />
-        </aside>
-
-        {mobileSidebarOpen && (
-          <div className="fixed inset-0 z-40 md:hidden">
-            <button
-              aria-label="关闭侧栏"
-              className="absolute inset-0 bg-foreground/25"
-              onClick={() => setMobileSidebarOpen(false)}
-              type="button"
-            />
-            <aside className="absolute inset-y-0 left-0 w-72 border-r bg-sidebar text-sidebar-foreground shadow-xl">
-              <div className="absolute right-3 top-3 z-10">
-                <Button aria-label="关闭侧栏" onClick={() => setMobileSidebarOpen(false)} size="icon" variant="ghost">
-                  <X className="size-4" />
-                </Button>
-              </div>
-              <SidebarContents apiBaseUrl={apiBaseUrl} health={health} onViewChange={handleViewChange} view={view} />
-            </aside>
-          </div>
-        )}
-
-        <div className={cn('transition-[padding] duration-200', sidebarOpen && 'md:pl-64')}>
-          <header className="sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-            <div className="flex h-16 items-center gap-5 px-4 lg:px-6">
-              <Button
-                aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-                className="size-9 shadow-sm"
-                onClick={() => {
-                  if (window.matchMedia('(min-width: 768px)').matches) {
-                    setSidebarOpen((value) => !value)
-                  } else {
-                    setMobileSidebarOpen(true)
-                  }
-                }}
-                size="icon"
-                variant="outline"
-              >
-                <PanelLeft className="size-4" />
-              </Button>
-              <nav className="hidden min-w-0 items-center gap-8 md:flex">
-                {navItems.map((item) => (
-                  <button
-                    className={cn(
-                      'text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
-                      view === item.key && 'text-foreground',
-                    )}
-                    key={item.key}
-                    onClick={() => handleViewChange(item.key)}
-                    type="button"
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </nav>
-              <div className="ms-auto flex min-w-0 items-center gap-2">
-                <div className="inline-flex h-9 items-center gap-2 rounded-md border bg-background px-3 text-sm shadow-sm">
-                  <BriefcaseBusiness className="size-4 text-muted-foreground" />
-                  <span className="max-w-36 truncate">
-                    {view === 'paper' ? selectedAccount?.account_name ?? '未选择账户' : `${strategyLabels[strategy]}策略`}
-                  </span>
-                </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button aria-label="刷新数据" onClick={onRefresh} size="icon" variant="outline">
-                      <RefreshCw className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>刷新基础数据</TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-            <div className="flex gap-5 overflow-x-auto px-4 pb-3 md:hidden">
-              {navItems.map((item) => {
-                const Icon = item.icon
-                return (
-                  <button
-                    className={cn(
-                      'inline-flex items-center gap-2 whitespace-nowrap text-sm font-medium text-muted-foreground',
-                      view === item.key && 'text-foreground',
-                    )}
-                    key={item.key}
-                    onClick={() => handleViewChange(item.key)}
-                    type="button"
-                  >
-                    <Icon className="size-4" />
-                    {item.label}
-                  </button>
-                )
-              })}
-            </div>
-          </header>
-          <main className="px-4 py-6 lg:px-6">
-            <div className="mx-auto w-full max-w-7xl space-y-5">
-              <div className="mb-2 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-                <div className="min-w-0">
-                  <p className="text-xs font-medium uppercase text-muted-foreground">holdings research</p>
-                  <h1 className="truncate text-2xl font-bold tracking-tight">{title}</h1>
-                  <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
-                </div>
-              </div>
-              {children}
-            </div>
-          </main>
-        </div>
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const Sidebar = () => (
+    <aside className="flex h-full w-[272px] flex-col bg-white px-4 py-5 text-[#312C46] shadow-[8px_0_32px_rgba(63,52,104,.04)]">
+      <div className="flex items-center gap-3 px-2 pb-8">
+        <div className="grid size-11 place-items-center rounded-2xl bg-[#F1846D] text-white shadow-[0_10px_20px_rgba(241,132,109,.25)]"><Sparkles className="size-5" /></div>
+        <div><p className="text-[15px] font-bold tracking-tight">今日交易</p><p className="mt-0.5 text-[11px] text-[#9490A5]">人工执行工作台</p></div>
       </div>
-    </TooltipProvider>
+      <div className="rounded-2xl bg-[#FAF9FF] px-4 py-3.5">
+        <p className="text-[11px] font-medium text-[#9490A5]">当前交易</p>
+        <p className="mt-1 truncate text-sm font-semibold">{selectedRun?.name ?? '尚未选择'}</p>
+        <p className="mt-1 text-xs text-[#9490A5]">{selectedRun ? runStatusLabel(selectedRun.status) : '等待真实数据'}</p>
+      </div>
+      <nav className="mt-7 space-y-1.5">{navItems.map(({ key, label, icon: Icon }) => (
+        <button key={key} onClick={() => { onViewChange(key); setMobileOpen(false) }} className={cn('flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-medium transition', view === key ? 'bg-[#FFF0EC] text-[#D96651]' : 'text-[#706B80] hover:bg-[#F8F7FF] hover:text-[#312C46]')}>
+          <Icon className="size-[18px]" strokeWidth={view === key ? 2.3 : 1.8} />{label}
+        </button>
+      ))}</nav>
+      <div className="mt-auto rounded-2xl border border-[#EEEAF7] bg-[#FDFDFF] p-4">
+        <div className="flex items-center gap-2"><span className={cn('size-2 rounded-full', health?.status === 'ok' ? 'bg-[#6CCBA7]' : 'bg-[#F6BD4F]')} /><p className="text-xs font-medium">{health?.status === 'ok' ? '服务已连接' : '正在连接服务'}</p></div>
+        <p className="mt-2 text-[11px] leading-5 text-[#9490A5]">仅提供辅助判断，实际下单请在华泰证券完成。</p>
+      </div>
+    </aside>
   )
+  return <div className="min-h-svh bg-[#F8F7FF] text-[#312C46]">
+    <div className="fixed inset-y-0 left-0 z-30 hidden lg:block"><Sidebar /></div>
+    {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-[#312C46]/25" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /><div className="absolute inset-y-0 left-0"><Sidebar /><button className="absolute right-4 top-5 grid size-8 place-items-center rounded-full bg-[#F8F7FF] text-[#706B80]" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X className="size-4" /></button></div></div>}
+    <div className="lg:pl-[272px]"><header className="sticky top-0 z-20 border-b border-[#ECE9F5]/80 bg-[#F8F7FF]/90 px-5 py-4 backdrop-blur lg:px-9"><div className="flex items-center gap-3"><button className="grid size-10 place-items-center rounded-xl bg-white text-[#706B80] shadow-sm lg:hidden" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu className="size-5" /></button><div className="min-w-0"><h1 className="text-xl font-bold tracking-tight">{title}</h1><p className="mt-0.5 truncate text-xs text-[#9490A5]">{subtitle}</p></div><div className="ml-auto flex items-center gap-2"><div className="hidden sm:block"><label className="sr-only" htmlFor="trade-run">选择当前交易</label><div className="relative"><select id="trade-run" value={selectedRun?.run_id ?? ''} onChange={event => event.target.value && onRunChange(Number(event.target.value))} className="h-10 max-w-56 appearance-none rounded-xl border border-[#E9E5F2] bg-white py-0 pl-3 pr-9 text-sm outline-none focus:border-[#F1846D]"> <option value="">选择当前交易</option>{runs.map(run => <option key={run.run_id} value={run.run_id}>{run.name}</option>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-3 size-4 text-[#9490A5]" /></div></div><Button variant="ghost" size="icon" className="rounded-xl text-[#706B80] hover:bg-white" onClick={onRefresh} aria-label="刷新数据"><RefreshCw className="size-[18px]" /></Button><Button variant="ghost" size="sm" className="hidden rounded-xl text-[#706B80] hover:bg-white sm:inline-flex" onClick={onLogout}><LogOut />退出</Button></div></div>{dataStatus && <div className="mt-3 flex items-start gap-2 rounded-xl bg-[#FFF8E8] px-3 py-2 text-xs leading-5 text-[#876316]"><span className="mt-1 size-1.5 shrink-0 rounded-full bg-[#F6BD4F]" />{dataStatus.message}</div>}</header><main className="mx-auto max-w-[1480px] p-5 lg:p-9">{children}</main></div>
+  </div>
 }
 
-function SidebarContents({
-  view,
-  onViewChange,
-  apiBaseUrl,
-  health,
-}: {
-  view: View
-  onViewChange: (view: View) => void
-  apiBaseUrl: string
-  health: { status: string; db: string } | null
-}) {
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center gap-3 px-4">
-        <div className="flex size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-          <BarChart3 className="size-5" />
-        </div>
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">持仓研究台</div>
-          <div className="truncate text-xs text-muted-foreground">A 股量化复盘</div>
-        </div>
-      </div>
-      <Separator className="bg-sidebar-border" />
-      <nav className="grid gap-1 p-2">
-        <div className="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">Workspace</div>
-        {navItems.map((item) => {
-          const Icon = item.icon
-          return (
-            <button
-              className={cn(
-                'flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                view === item.key && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground',
-              )}
-              key={item.key}
-              onClick={() => onViewChange(item.key)}
-              type="button"
-            >
-              <Icon className="size-4" />
-              {item.label}
-            </button>
-          )
-        })}
-      </nav>
-      <div className="mt-auto p-4">
-        <div className="rounded-lg border border-sidebar-border bg-background p-3 shadow-sm">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-muted-foreground">API</span>
-            <Badge className="bg-emerald-600 text-white">{health?.status ?? 'offline'}</Badge>
-          </div>
-          <p className="break-all text-xs leading-5 text-muted-foreground">{apiBaseUrl}</p>
-          <p className="mt-2 text-xs text-muted-foreground">DB {health?.db ?? '-'}</p>
-        </div>
-      </div>
-    </div>
-  )
+export function runStatusLabel(status: TradeRun['status']) {
+  return ({ draft: '尚未启动', running: '进行中', paused: '已暂停', ended: '已结束', deleted: '已删除' } as const)[status]
 }
+
+export const strategyLabels = { short_term: '短线', medium_term: '中线', long_term: '长线', swing: '波段', trend: '趋势', ic_optimized: 'IC 优化' } as const
+export const strategyDescriptions = { short_term: '短线交易', medium_term: '中线交易', long_term: '长线交易', swing: '波段研究', trend: '趋势研究', ic_optimized: 'IC 优化研究' } as const

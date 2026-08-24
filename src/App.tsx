@@ -1,394 +1,201 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { EmptyState } from '@/components/dashboard/common'
-import type { StreamState } from '@/components/dashboard/common'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { AppShell, type View } from '@/components/layout/app-shell'
-import { api, ApiError, type DailyRunParams, type ScreenParams } from '@/lib/api'
-import { BacktestPage } from '@/pages/backtest-page'
-import { PaperPage } from '@/pages/paper-page'
-import { RatingPage } from '@/pages/rating-page'
-import type {
-  AccountApiRow,
-  BacktestApiRun,
-  DailyBar,
-  EquityApiPoint,
-  PositionApiRow,
-  RatingApiResponse,
-  ScreenApiResult,
-  Strategy,
-  TaskStatus,
-  TradeApiRow,
-} from '@/types'
+import { api, ApiError, onUnauthorized, type MarketScanSubmitParams, type RecordTradeRunFillParams } from '@/lib/api'
+import { MarketScanPage } from '@/pages/market-scan-page'
+import { TradeWorkbenchPage } from '@/pages/trade-workbench-page'
+import type { MarketScanTask, SystemDataStatus, TradeRun, TradeRunDetailDashboard, TradeRunEvent, TradeRunPerformance, TradeRunPlan, TradeRunPosition } from '@/types'
 
-interface AutoRebalanceResult {
-  asof?: string | null
-  sold?: { n?: number; revenue?: number }
-  bought?: { n?: number; spent?: number; skipped?: Array<{ ts_code: string; reason: string }> }
-  picks?: string[]
-  total_equity?: number
-  skipped?: boolean
-  reason?: string
+type NoticeInput = { type: 'success' | 'error'; title: string; detail?: string }
+type Notice = NoticeInput & { id: number; phase: 'entering' | 'visible' | 'leaving' }
+
+function LoginPage({ onLogin, error }: { onLogin: (username: string, password: string) => Promise<void>; error: string }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    setBusy(true)
+    try { await onLogin(username, password) } finally { setBusy(false) }
+  }
+  return <div className="grid min-h-svh place-items-center bg-[#F8F7FF] p-5 text-[#312C46]"><div className="w-full max-w-md rounded-[28px] bg-white p-8 shadow-[0_20px_60px_rgba(62,47,111,.10)]"><div className="grid size-12 place-items-center rounded-2xl bg-[#F1846D] text-xl text-white shadow-[0_10px_20px_rgba(241,132,109,.25)]">✦</div><p className="mt-7 text-sm text-[#9490A5]">人工执行工作台</p><h1 className="mt-1 text-2xl font-bold">进入今日交易</h1><p className="mt-3 text-sm leading-6 text-[#706B80]">使用管理员用户名和密码建立安全会话。</p><label className="mt-7 block text-sm font-medium">用户名<input autoFocus autoComplete="username" className="mt-2 h-11 w-full rounded-xl border border-[#E9E5F2] bg-[#FDFCFF] px-3 outline-none focus:border-[#F1846D]" value={username} onChange={event => setUsername(event.target.value)} onKeyDown={event => event.key === 'Enter' && username && password && void submit()} placeholder="管理员用户名" /></label><label className="mt-4 block text-sm font-medium">密码<input autoComplete="current-password" className="mt-2 h-11 w-full rounded-xl border border-[#E9E5F2] bg-[#FDFCFF] px-3 outline-none focus:border-[#F1846D]" type="password" value={password} onChange={event => setPassword(event.target.value)} onKeyDown={event => event.key === 'Enter' && username && password && void submit()} placeholder="管理员密码" /></label>{error && <p className="mt-3 rounded-xl bg-[#FFF0EC] px-3 py-2 text-sm text-[#B4534C]">{error}</p>}<button className="mt-6 h-11 w-full rounded-xl bg-[#F1846D] font-medium text-white shadow-[0_10px_18px_rgba(241,132,109,.22)] transition hover:bg-[#E5745E] disabled:opacity-50" disabled={busy || !username || !password} onClick={() => void submit()}>{busy ? '正在验证…' : '进入工作台'}</button></div></div>
 }
-
-interface DailyRunResult {
-  asof?: string
-  dry_run?: boolean
-  log?: string
-}
-
-const defaultStream: StreamState = { active: false, progress: 0, message: '' }
-const defaultStrategies: Strategy[] = ['short_term', 'swing', 'trend', 'ic_optimized']
 
 function App() {
-  const [view, setView] = useState<View>('paper')
-  const [strategy, setStrategy] = useState<Strategy>('swing')
-  const [strategies, setStrategies] = useState<Strategy[]>(defaultStrategies)
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null)
+  const [authError, setAuthError] = useState('')
+  const [view, setView] = useState<View>('overview')
+  const [runs, setRuns] = useState<TradeRun[]>([])
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
+  const [dataStatus, setDataStatus] = useState<SystemDataStatus | null>(null)
+  const [dashboard, setDashboard] = useState<TradeRunDetailDashboard | null>(null)
+  const [plans, setPlans] = useState<TradeRunPlan[]>([])
+  const [positions, setPositions] = useState<TradeRunPosition[]>([])
+  const [performance, setPerformance] = useState<TradeRunPerformance | null>(null)
+  const [events, setEvents] = useState<TradeRunEvent[]>([])
+  const [scanTasks, setScanTasks] = useState<MarketScanTask[]>([])
+  const [scanTask, setScanTask] = useState<MarketScanTask | null>(null)
   const [health, setHealth] = useState<{ status: string; db: string } | null>(null)
-  const [accounts, setAccounts] = useState<AccountApiRow[]>([])
-  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
-  const [positions, setPositions] = useState<PositionApiRow[]>([])
-  const [trades, setTrades] = useState<TradeApiRow[]>([])
-  const [equityCurve, setEquityCurve] = useState<EquityApiPoint[]>([])
-  const [dailyReport, setDailyReport] = useState('')
-  const [backtests, setBacktests] = useState<BacktestApiRun[]>([])
-  const [screenResult, setScreenResult] = useState<ScreenApiResult | null>(null)
-  const [rating, setRating] = useState<RatingApiResponse | null>(null)
-  const [dailyBars, setDailyBars] = useState<DailyBar[]>([])
-  const [selectedRatingCode, setSelectedRatingCode] = useState('')
-  const [tasks, setTasks] = useState<TaskStatus[]>([])
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [accountLoading, setAccountLoading] = useState(false)
-  const [positionStream, setPositionStream] = useState<StreamState>(defaultStream)
-  const [ratingStream, setRatingStream] = useState<StreamState>(defaultStream)
-  const positionStreamCloseRef = useRef<(() => void) | null>(null)
-  const ratingStreamCloseRef = useRef<(() => void) | null>(null)
-  const ratingBusyRef = useRef(false)
-  const accountRequestRef = useRef(0)
-  const ratingRequestRef = useRef(0)
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const noticeEnterTimer = useRef<number | null>(null)
+  const noticeTimer = useRef<number | null>(null)
+  const noticeExitTimer = useRef<number | null>(null)
+  const failedScanTaskIds = useRef(new Set<string>())
+  const pollingMarketScanTaskIds = useRef(new Set<string>())
+  const selectedRun = useMemo(() => runs.find(run => run.run_id === selectedRunId) ?? runs[0] ?? null, [runs, selectedRunId])
 
-  const selectedAccount = useMemo(
-    () => accounts.find((account) => account.account_id === selectedAccountId) ?? accounts[0],
-    [accounts, selectedAccountId],
-  )
+  const dismissNotice = useCallback(() => {
+    if (noticeEnterTimer.current !== null) window.clearTimeout(noticeEnterTimer.current)
+    noticeEnterTimer.current = null
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
+    noticeTimer.current = null
+    setNotice(current => current && current.phase !== 'leaving' ? { ...current, phase: 'leaving' } : current)
+    if (noticeExitTimer.current !== null) window.clearTimeout(noticeExitTimer.current)
+    noticeExitTimer.current = window.setTimeout(() => setNotice(current => current?.phase === 'leaving' ? null : current), 220)
+  }, [])
+  const notify = useCallback((next: NoticeInput) => {
+    if (noticeEnterTimer.current !== null) window.clearTimeout(noticeEnterTimer.current)
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
+    if (noticeExitTimer.current !== null) window.clearTimeout(noticeExitTimer.current)
+    const id = Date.now()
+    setNotice({ ...next, id, phase: 'entering' })
+    noticeEnterTimer.current = window.setTimeout(() => setNotice(current => current?.id === id ? { ...current, phase: 'visible' } : current), 220)
+    noticeTimer.current = window.setTimeout(dismissNotice, 4200)
+  }, [dismissNotice])
 
-  async function refreshBase() {
-    setLoading(true)
-    setError('')
+  const refreshRun = useCallback(async (id: number) => {
     try {
-      const [healthData, strategyData, accountData, backtestData, taskData] = await Promise.all([
-        api.health(),
-        api.getStrategies(),
-        api.getAccounts(),
-        api.getBacktests(undefined, 30),
-        api.getTasks(undefined, undefined, 12),
-      ])
-      setHealth(healthData)
-      setStrategies(strategyData.strategies.length ? strategyData.strategies : defaultStrategies)
-      setAccounts(accountData)
-      setBacktests(backtestData)
-      setTasks(taskData)
-      if (accountData.length && selectedAccountId === null) {
-        const defaultAccount = accountData.find((account) => account.is_active) ?? accountData[0]
-        setSelectedAccountId(defaultAccount.account_id)
-        setStrategy(defaultAccount.strategy_name)
-      }
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function refreshAccount(accountId: number) {
-    const requestId = accountRequestRef.current + 1
-    accountRequestRef.current = requestId
-    positionStreamCloseRef.current?.()
-    setAccountLoading(true)
-    setPositionStream({ active: true, progress: 5, message: '开始同步持仓实时数据' })
-
-    try {
-      const [tradeData, curveData, reportData] = await Promise.all([
-        api.getTrades(accountId, 50),
-        api.getEquityCurve(accountId),
-        api.getReport(accountId).catch(() => ({ report: '' })),
-      ])
-      if (accountRequestRef.current !== requestId) return
-      setTrades(tradeData)
-      setEquityCurve(curveData)
-      setDailyReport(reportData.report)
-    } catch (err) {
-      if (accountRequestRef.current === requestId) setError(errorMessage(err))
-    }
-
-    positionStreamCloseRef.current = api.streamPositions(
-      accountId,
-      { useRealtime: true },
-      {
-        onProgress: (progress, message) => {
-          if (accountRequestRef.current !== requestId) return
-          setPositionStream({ active: true, progress, message })
-        },
-        onResult: (result) => {
-          if (accountRequestRef.current !== requestId) return
-          setPositions(result)
-          setPositionStream({ active: false, progress: 100, message: '持仓同步完成' })
-          setAccountLoading(false)
-        },
-        onError: (message) => {
-          if (accountRequestRef.current !== requestId) return
-          setPositionStream({ active: true, progress: 20, message: `${message}，正在切换普通接口` })
-          api
-            .getPositions(accountId, true)
-            .then((result) => {
-              if (accountRequestRef.current !== requestId) return
-              setPositions(result)
-              setPositionStream({ active: false, progress: 100, message: '持仓同步完成' })
-            })
-            .catch((err) => {
-              if (accountRequestRef.current === requestId) {
-                setError(errorMessage(err))
-                setPositionStream({ active: false, progress: 0, message: '', error: message })
-              }
-            })
-            .finally(() => {
-              if (accountRequestRef.current === requestId) setAccountLoading(false)
-            })
-        },
-      },
-    )
-  }
-
-  async function runRating(code: string, ratingStrategy = strategy, noFlow = false, noNews = false) {
-    const normalized = code.trim()
-    if (!normalized) return
-    if (ratingBusyRef.current) return
-    ratingBusyRef.current = true
-    const requestId = ratingRequestRef.current + 1
-    ratingRequestRef.current = requestId
-    ratingStreamCloseRef.current?.()
+      const [run, detail, nextPlans, nextPositions, nextPerformance, nextEvents] = await Promise.all([api.getTradeRun(id), api.getTradeRunDashboard(id), api.getTradeRunPlans(id), api.getTradeRunPositions(id), api.getTradeRunPerformance(id), api.getTradeRunEvents(id)])
+      setRuns(current => current.map(item => item.run_id === run.run_id ? run : item))
+      setDashboard(detail); setPlans(nextPlans); setPositions(nextPositions); setPerformance(nextPerformance); setEvents(nextEvents)
+    } catch (reason) { setError(errorMessage(reason)) }
+  }, [])
+  const refreshScanTasks = useCallback(async () => {
+    const tasks = await api.getMarketScanTasks()
+    setScanTasks(tasks)
+    setScanTask(current => current && tasks.some(task => task.task_id === current.task_id) ? current : tasks[0] ?? null)
+  }, [])
+  const refresh = useCallback(async (notifyOnComplete = false) => {
     setError('')
-    setView('rating')
-    setSelectedRatingCode(normalized)
-    setRatingStream({ active: true, progress: 3, message: '解析股票代码' })
-    setDailyBars([])
-
-    api.getDailyBars(normalized, 90).then((bars) => {
-      if (ratingRequestRef.current === requestId) setDailyBars(bars)
-    }).catch(() => {
-      if (ratingRequestRef.current === requestId) setDailyBars([])
-    })
-
-    ratingStreamCloseRef.current = api.streamRating(
-      normalized,
-      { strategy: ratingStrategy, noFlow, noNews },
-      {
-        onProgress: (progress, message) => {
-          if (ratingRequestRef.current !== requestId) return
-          setRatingStream({ active: true, progress, message })
-        },
-        onResult: (result) => {
-          if (ratingRequestRef.current !== requestId) return
-          setRating(result)
-          setRatingStream({ active: false, progress: 100, message: '评级完成' })
-          ratingBusyRef.current = false
-        },
-        onError: (message) => {
-          if (ratingRequestRef.current !== requestId) return
-          setRatingStream({ active: true, progress: 20, message: `${message}，正在切换普通接口` })
-          api
-            .getRating(normalized, ratingStrategy, noFlow, noNews)
-            .then((result) => {
-              if (ratingRequestRef.current !== requestId) return
-              setRating(result)
-              setRatingStream({ active: false, progress: 100, message: '评级完成' })
-              ratingBusyRef.current = false
-            })
-            .catch((err) => {
-              if (ratingRequestRef.current === requestId) {
-                setError(errorMessage(err))
-                setRatingStream({ active: false, progress: 0, message: '', error: message })
-                ratingBusyRef.current = false
-              }
-            })
-        },
-      },
-    )
-  }
-
-  async function trackTask<T>(
-    starter: () => Promise<{ task_id: string }>,
-    onDone?: (result: T) => void | Promise<void>,
-    intervalMs = 3000,
-  ) {
-    setError('')
+    try { setHealth(await api.health()) } catch (reason) { setHealth(null); const message = errorMessage(reason); if (notifyOnComplete) notify({ type: 'error', title: '刷新数据失败', detail: message }); else setError(message); return false }
     try {
-      const started = await starter()
+      const [summary, systemStatus, nextScanTasks] = await Promise.all([api.getTradeRunsDashboard(), api.getSystemDataStatus(), api.getMarketScanTasks()])
+      setRuns(summary.runs); setDataStatus(systemStatus); setScanTasks(nextScanTasks); setScanTask(nextScanTasks[0] ?? null)
+      setSelectedRunId(current => summary.runs.some(run => run.run_id === current) ? current : summary.runs[0]?.run_id ?? null)
+      if (notifyOnComplete) notify({ type: 'success', title: '数据已刷新', detail: '已更新交易、扫描记录和系统数据状态。' })
+      return true
+    } catch (reason) { if (!(reason instanceof ApiError && reason.status === 401)) { const message = errorMessage(reason); if (notifyOnComplete) notify({ type: 'error', title: '刷新数据失败', detail: message }); else setError(message) }; return false }
+  }, [notify])
+  useEffect(() => { api.getSession().then(session => { setAuthenticated(session.authenticated); if (session.authenticated) void refresh() }).catch(() => setAuthenticated(false)) }, [refresh])
+  useEffect(() => onUnauthorized(() => { setAuthenticated(false); setRuns([]); setDashboard(null); setPlans([]); setPositions([]); setScanTasks([]); setScanTask(null) }), [])
+  useEffect(() => { if (selectedRun?.run_id) void refreshRun(selectedRun.run_id); else { setDashboard(null); setPlans([]); setPositions([]); setPerformance(null); setEvents([]) } }, [selectedRun?.run_id, refreshRun])
+  const startRun = async (id: number) => {
+    try {
+      await api.startTradeRun(id)
+      await refresh()
+      await refreshRun(id)
+      notify({ type: 'success', title: '交易已启动', detail: '已启动本次交易，并同步更新当前数据。' })
+    } catch (reason) { notify({ type: 'error', title: '启动交易失败', detail: errorMessage(reason) }) }
+  }
+  const generate = async (params: MarketScanSubmitParams) => {
+    try {
+      const submitted = await api.submitMarketScan(params)
+      setScanTask(submitted.task)
+      setScanTasks(previous => [submitted.task, ...previous.filter(task => task.task_id !== submitted.task.task_id)])
+      void pollMarketScan(submitted.task_id)
+    } catch (reason) { throw new Error(marketScanErrorMessage(reason)) }
+  }
+  const pollMarketScan = useCallback(async (taskId: string) => {
+    if (pollingMarketScanTaskIds.current.has(taskId)) return
+    pollingMarketScanTaskIds.current.add(taskId)
+    try {
       for (;;) {
-        const current = await api.getTask(started.task_id) as TaskStatus<T>
-        setTasks((prev) => upsertTask(prev, current))
-        if (current.status === 'done') {
-          if (current.result) await onDone?.(current.result)
-          await refreshBase()
-          if (selectedAccount?.account_id) await refreshAccount(selectedAccount.account_id)
-          return current
+        await wait(1000)
+        try {
+          const task = await api.getMarketScanTask(taskId)
+          setScanTask(current => current?.task_id === taskId ? task : current)
+          setScanTasks(previous => [task, ...previous.filter(item => item.task_id !== task.task_id)])
+          if (task.status === 'failed' && !failedScanTaskIds.current.has(task.task_id)) {
+            failedScanTaskIds.current.add(task.task_id)
+            notify({ type: 'error', title: '市场扫描失败', detail: task.error || '后端未提供失败原因。' })
+          }
+          if (task.status !== 'pending' && task.status !== 'running') return
+        } catch (reason) {
+          if (isMissingMarketScanTask(reason)) {
+            await refreshScanTasks().catch(() => undefined)
+            notify({ type: 'error', title: '扫描任务不存在', detail: '该任务可能已被清理，扫描记录已刷新。' })
+          } else {
+            notify({ type: 'error', title: '读取扫描进度失败', detail: marketScanErrorMessage(reason) })
+          }
+          return
         }
-        if (current.status === 'failed') throw new Error(current.error ?? '任务失败')
-        await sleep(intervalMs)
       }
-    } catch (err) {
-      setError(errorMessage(err))
+    } finally { pollingMarketScanTaskIds.current.delete(taskId) }
+  }, [notify, refreshScanTasks])
+  useEffect(() => {
+    scanTasks.filter(task => task.status === 'pending' || task.status === 'running').forEach(task => { void pollMarketScan(task.task_id) })
+  }, [pollMarketScan, scanTasks])
+  const selectScan = async (taskId: string) => {
+    try {
+      const task = await api.getMarketScanTask(taskId)
+      setScanTask(task)
+      setScanTasks(previous => [task, ...previous.filter(item => item.task_id !== task.task_id)])
+    } catch (reason) {
+      if (isMissingMarketScanTask(reason)) await refreshScanTasks().catch(() => undefined)
+      throw new Error(marketScanErrorMessage(reason))
     }
   }
-
-  useEffect(() => {
-    refreshBase()
-  }, [])
-
-  useEffect(() => {
-    if (selectedAccount?.account_id) {
-      setStrategy(selectedAccount.strategy_name)
-      refreshAccount(selectedAccount.account_id).catch((err) => setError(errorMessage(err)))
+  const fill = async (params: RecordTradeRunFillParams) => {
+    if (!selectedRun) throw new Error('请先选择本次交易。')
+    try {
+      await api.recordTradeRunFill(selectedRun.run_id, params)
+      await refreshRun(selectedRun.run_id)
+      notify({ type: 'success', title: '真实成交已保存', detail: '持仓、成本和交易摘要已同步更新。' })
+    } catch (reason) {
+      const message = errorMessage(reason)
+      notify({ type: 'error', title: '保存真实成交失败', detail: message })
+      throw new Error(message)
     }
-  }, [selectedAccount?.account_id])
-
-  useEffect(() => {
-    if (view !== 'rating') {
-      ratingStreamCloseRef.current?.()
-      ratingBusyRef.current = false
-      setRatingStream((prev) => ({ ...prev, active: false }))
-    }
-  }, [view])
-
-  useEffect(() => () => {
-    positionStreamCloseRef.current?.()
-    ratingStreamCloseRef.current?.()
-  }, [])
-
-  const pageTitle = {
-    paper: '模拟盘复盘',
-    rating: '持仓评级',
-    backtest: '回测表现',
-  }[view]
-
-  const pageSubtitle = {
-    paper: '账户、权益、持仓和调仓任务的一日复盘',
-    rating: '以当前持仓为上下文解释总评级、五维评分和走势',
-    backtest: '按最近回测比较策略收益、回撤、Sharpe 和胜率',
-  }[view]
-
-  return (
-    <AppShell
-      apiBaseUrl={api.baseUrl}
-      health={health}
-      onRefresh={refreshBase}
-      onViewChange={setView}
-      selectedAccount={selectedAccount}
-      strategy={strategy}
-      subtitle={pageSubtitle}
-      title={pageTitle}
-      view={view}
-    >
-      {error && <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-      {loading ? (
-        <EmptyState description="正在读取账户、策略、任务和回测记录。" title="正在连接后端 API" />
-      ) : (
-        <>
-          {view === 'paper' && selectedAccount && (
-            <PaperPage
-              accountLoading={accountLoading}
-              accounts={accounts}
-              dailyReport={dailyReport}
-              equityCurve={equityCurve}
-              onAutoRebalance={(limit, enableNews) =>
-                trackTask<AutoRebalanceResult>(
-                  () => api.runAutoRebalanceAsync(selectedAccount.account_id, limit, enableNews),
-                  undefined,
-                  3000,
-                )
-              }
-              onDailyRun={(params: DailyRunParams) =>
-                trackTask<DailyRunResult>(() => api.runDailyAsync(selectedAccount.account_id, params), undefined, 3000)
-              }
-              onRatePosition={(code) => runRating(code, selectedAccount.strategy_name)}
-              onRefresh={() => refreshAccount(selectedAccount.account_id).catch((err) => setError(errorMessage(err)))}
-              onSelectAccount={setSelectedAccountId}
-              onSnapshot={() =>
-                api
-                  .saveSnapshot(selectedAccount.account_id)
-                  .then(() => refreshAccount(selectedAccount.account_id))
-                  .catch((err) => setError(errorMessage(err)))
-              }
-              onStoploss={() =>
-                api
-                  .triggerStoploss(selectedAccount.account_id)
-                  .then(() => refreshAccount(selectedAccount.account_id))
-                  .catch((err) => setError(errorMessage(err)))
-              }
-              positionStream={positionStream}
-              positions={positions}
-              selectedAccount={selectedAccount}
-              tasks={tasks}
-              trades={trades}
-            />
-          )}
-          {view === 'paper' && !selectedAccount && <EmptyState title="后端暂无模拟账户" />}
-          {view === 'rating' && (
-            <RatingPage
-              dailyBars={dailyBars}
-              onRun={runRating}
-              onRunScreen={(params: ScreenParams) =>
-                trackTask<ScreenApiResult>(
-                  () => api.runScreenAsync(params),
-                  (result) => setScreenResult(result),
-                  2500,
-                )
-              }
-              onStrategyChange={setStrategy}
-              positions={positions}
-              rating={rating}
-              ratingStream={ratingStream}
-              screenResult={screenResult}
-              selectedAccount={selectedAccount}
-              selectedCode={selectedRatingCode}
-              strategies={strategies}
-              strategy={strategy}
-            />
-          )}
-          {view === 'backtest' && (
-            <BacktestPage
-              onRun={(params) =>
-                trackTask(
-                  () => api.runBacktestAsync(params),
-                  () => api.getBacktests(undefined, 30).then(setBacktests),
-                  10000,
-                )
-              }
-              onStrategyChange={setStrategy}
-              runs={backtests}
-              strategies={strategies}
-              strategy={strategy}
-              tasks={tasks}
-            />
-          )}
-        </>
-      )}
-    </AppShell>
-  )
+  }
+  const login = async (username: string, password: string) => { try { setAuthError(''); await api.login(username, password); setAuthenticated(true); await refresh() } catch (reason) { setAuthError(errorMessage(reason)) } }
+  if (authenticated === null) return <div className="grid min-h-svh place-items-center bg-[#F8F7FF] text-sm text-[#9490A5]">正在验证安全会话…</div>
+  if (!authenticated) return <LoginPage onLogin={login} error={authError} />
+  const titles: Record<View, [string, string]> = { overview: ['概览', '从启动到复盘，清楚掌握今天的每一步。'], workbench: ['当前交易', '查看计划、在华泰下单，并回填真实成交。'], scan: ['市场扫描', '查看候选池、数据截面与每个判断的原因。'], records: ['持仓与记录', '只展示由真实成交派生的持仓和动作。'], rules: ['交易规则', '确认人工执行边界与数据使用原则。'], settings: ['设置', '查看当前服务和数据状态。'], runs: ['当前交易', '查看计划、在华泰下单，并回填真实成交。'], plans: ['当前交易', '查看计划、在华泰下单，并回填真实成交。'], fills: ['当前交易', '查看计划、在华泰下单，并回填真实成交。'], performance: ['持仓与记录', '只展示由真实成交派生的持仓和动作。'], comparison: ['市场扫描', '查看候选池、数据截面与每个判断的原因。'], etfs: ['市场扫描', '查看候选池、数据截面与每个判断的原因。'], audit: ['持仓与记录', '只展示由真实成交派生的持仓和动作。'] }
+  const workbenchMode = (['overview', 'workbench', 'records', 'rules', 'settings'] as const).includes(view as 'overview' | 'workbench' | 'records' | 'rules' | 'settings') ? view as 'overview' | 'workbench' | 'records' | 'rules' | 'settings' : 'workbench'
+  return <AppShell view={view} onViewChange={setView} title={titles[view][0]} subtitle={titles[view][1]} health={health} runs={runs} selectedRun={selectedRun ?? undefined} onRunChange={setSelectedRunId} dataStatus={dataStatus} onRefresh={() => void refresh(true)} onLogout={async () => { await api.logout(); setAuthenticated(false) }}><>{notice && <AppNotice notice={notice} onClose={dismissNotice} />}{error && <div className="mb-5 rounded-xl bg-[#FFF0EC] px-4 py-3 text-sm text-[#B4534C]">{error}</div>}{view === 'scan' ? <MarketScanPage scanTask={scanTask} scanTasks={scanTasks} onGenerate={generate} onSelectScan={selectScan} onNotify={notify} /> : <TradeWorkbenchPage mode={workbenchMode} run={selectedRun} dashboard={dashboard} plans={plans} positions={positions} performance={performance} events={events} dataStatus={dataStatus} onStart={startRun} onFill={fill} />}</></AppShell>
 }
 
-function errorMessage(err: unknown) {
-  if (err instanceof ApiError) return `${err.message}${err.code ? ` (${err.code})` : ''}`
-  if (err instanceof Error) return err.message
-  return '未知错误'
+function AppNotice({ notice, onClose }: { notice: Notice; onClose: () => void }) {
+  const success = notice.type === 'success'
+  return <div className={`app-notice app-notice--${notice.phase} fixed right-5 top-5 z-[100] flex w-[min(24rem,calc(100vw-2.5rem))] gap-3 rounded-2xl border p-4 shadow-[0_18px_50px_rgba(49,44,70,.18)] ${success ? 'border-[#C8EBD9] bg-white text-[#286E55]' : 'border-[#F3CCC5] bg-white text-[#A94740]'}`} role="status" aria-live="polite"><div className={`grid size-8 shrink-0 place-items-center rounded-full ${success ? 'bg-[#EAF9F2]' : 'bg-[#FFF0EC]'}`}>{success ? <CheckCircle2 className="size-5" /> : <AlertTriangle className="size-5" />}</div><div className="min-w-0 flex-1"><p className="font-semibold">{notice.title}</p>{notice.detail && <p className="mt-1 text-sm leading-5 text-[#706B80]">{notice.detail}</p>}</div><button type="button" onClick={onClose} className="-mt-1 text-lg leading-none text-[#9490A5] hover:text-[#312C46]" aria-label="关闭提示">×</button></div>
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
+function wait(ms: number) { return new Promise<void>(resolve => window.setTimeout(resolve, ms)) }
+
+function errorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return '用户名或密码不正确，请核对后重新登录。'
+    if (error.status >= 500) return error.message || '后端服务暂时不可用，请稍后重试或联系管理员。'
+    return error.message || '请求失败，请稍后重试。'
+  }
+  if (error instanceof Error && /failed to fetch/i.test(error.message)) {
+    return '无法连接后端服务。请确认分析服务已启动，并检查前端代理地址是否正确。'
+  }
+  return '请求失败，请稍后重试或检查服务连接。'
 }
 
-function upsertTask(tasks: TaskStatus[], task: TaskStatus) {
-  const next = [task, ...tasks.filter((item) => item.task_id !== task.task_id)]
-  return next.slice(0, 12)
+function isMissingMarketScanTask(error: unknown) {
+  return error instanceof ApiError && error.status === 404 && error.code === 'MARKET_SCAN_TASK_NOT_FOUND'
 }
 
+function marketScanErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.code === 'UNKNOWN_STRATEGY') return '策略无效，请重新选择策略后提交。'
+    if (error.code === 'INVALID_ASSET_TYPES') return '请至少选择“股票”或“ETF”之一。'
+    if (error.code === 'INVALID_PLAN_WINDOW') return '扫描时段无效，请重新选择盘前或午间扫描。'
+    if (error.code === 'TRADE_RUN_NOT_CONFIGURED') return '服务端数据连接尚未就绪，请联系管理员检查研究数据服务。'
+    if (isMissingMarketScanTask(error)) return '扫描任务不存在，可能已被清理；扫描记录已刷新。'
+  }
+  return errorMessage(error)
+}
 export default App

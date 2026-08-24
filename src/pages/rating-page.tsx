@@ -22,6 +22,7 @@ import type {
   ScreenApiPick,
   ScreenApiResult,
   Strategy,
+  TaskStatus,
 } from '@/types'
 
 export function RatingPage({
@@ -33,6 +34,7 @@ export function RatingPage({
   dailyBars,
   selectedCode,
   screenResult,
+  screenTask,
   ratingStream,
   onStrategyChange,
   onRun,
@@ -46,6 +48,7 @@ export function RatingPage({
   dailyBars: DailyBar[]
   selectedCode: string
   screenResult: ScreenApiResult | null
+  screenTask?: TaskStatus
   ratingStream: StreamState
   onStrategyChange: (value: Strategy) => void
   onRun: (code: string, strategy: Strategy, noFlow?: boolean, noNews?: boolean) => void
@@ -134,7 +137,7 @@ export function RatingPage({
         </CardHeader>
         {screenOpen && (
           <CardContent>
-            <AuxiliaryScreening result={screenResult} strategy={strategy} onRun={onRunScreen} />
+            <AuxiliaryScreening result={screenResult} strategy={strategy} task={screenTask} onRun={onRunScreen} />
           </CardContent>
         )}
       </Card>
@@ -253,10 +256,12 @@ function RatingDetail({
 function AuxiliaryScreening({
   strategy,
   result,
+  task,
   onRun,
 }: {
   strategy: Strategy
   result: ScreenApiResult | null
+  task?: TaskStatus
   onRun: (params: ScreenParams) => void
 }) {
   const [capital, setCapital] = useState(100000)
@@ -264,6 +269,10 @@ function AuxiliaryScreening({
   const [limit, setLimit] = useState(300)
   const [lookback, setLookback] = useState(60)
   const [enableNews, setEnableNews] = useState(false)
+  const taskActive = task?.status === 'pending' || task?.status === 'running'
+  const taskDone = task?.status === 'done'
+  const taskFailed = task?.status === 'failed'
+  const progress = Math.round(task?.progress ?? 0)
 
   return (
     <div className="space-y-4">
@@ -276,8 +285,36 @@ function AuxiliaryScreening({
           <Checkbox checked={enableNews} onCheckedChange={(checked) => setEnableNews(Boolean(checked))} />
           启用消息面
         </label>
-        <Button onClick={() => onRun({ strategy, capital, top, limit, lookback, enableNews })}><Play />跑候选</Button>
+        <Button
+          disabled={taskActive}
+          onClick={() => onRun({ strategy, capital, top, limit, lookback, enableNews })}
+        >
+          {taskActive ? <Loader2 className="animate-spin" /> : <Play />}
+          {taskActive ? '选股中' : '跑候选'}
+        </Button>
       </div>
+
+      {task && (
+        <div className="rounded-md border bg-muted/20 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium">
+                {taskActive && '候选选股正在执行'}
+                {taskDone && '候选选股已完成'}
+                {taskFailed && '候选选股失败'}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {task.progress_msg || task.error || `任务 ID：${task.task_id}`}
+              </div>
+            </div>
+            <Badge variant={taskFailed ? 'destructive' : taskDone ? 'default' : 'secondary'}>
+              {taskFailed ? 'failed' : taskDone ? 'done' : `${progress}%`}
+            </Badge>
+          </div>
+          <Progress className="mt-3" value={taskDone ? 100 : progress} />
+        </div>
+      )}
+
       <PickTable picks={result?.picks ?? []} />
     </div>
   )
